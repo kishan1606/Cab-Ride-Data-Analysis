@@ -1,0 +1,484 @@
+---
+subtitle: "Cab Ride Data Analytics"
+
+# Loading Libraries #
+
+```{r}
+#install.packages("caret", repos = "http://cran.us.r-project.org")
+# install.packages("sqldf")
+# install.packages("tidyr")
+# install.packages("tidyverse")
+# install.packages("ggplot2")
+# install.packages("readr")
+#install.packages("gmodels")
+# install.packages("tm")
+# install.packages("SnowballC")
+# install.packages("wordcloud")
+# install.packages("RColorBrewer")
+# install.packages("treemap")
+# install.packages("highcharter")
+# install.packages("remotes")
+# remotes::install_github("cran/DMwR")
+#install.packages("corrplot")
+#install.packages('rpart.plot')
+library(rpart.plot)
+library(corrplot)
+library("DMwR")
+library(treemap)
+library(highcharter)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+options(gsubfn.engine="R")
+library(sqldf)
+library(ggplot2)
+library(readr)
+library(gmodels)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(rpart)
+library(randomForest)
+
+```
+
+# Loading Dataset #
+
+```{r}
+
+cab_ds <- read.csv("/Users/Shared/pranjalnaik/Pranjal DPA/rideshare_kaggle.csv")
+#head(cab_ds)
+summary(cab_ds)
+```
+
+### Data Preprocessing ###
+###Performing Data Sanity Checks before proceeding with analysis
+
+```{r}
+#Checking the shape of the dataset
+row=nrow(cab_ds)
+col=ncol(cab_ds)
+sprintf("The rows and colums are: %s %s",row,col)
+```
+
+```{r}
+#See whether missing values or not
+sapply(cab_ds, function(x) sum(is.na(x)))
+cab_ds_distinct <-  na.omit(cab_ds) 
+cab_ds_distinct<- cab_ds_distinct %>% distinct()
+print(paste("The number of records removed : ", nrow(cab_ds) - nrow(cab_ds_distinct)))
+```
+
+
+## Exploratory Data Analysis 
+
+### Who offers the most rides,Uber or lyft? 
+
+```{r}
+ cab_ds_distinct %>% group_by(cab_type) %>% 
+    summarise("Total_ Count" = length(id),
+              'Percentage' = (length(id) / nrow(cab_ds_distinct)) * 100)
+bp <-ggplot()+
+  geom_bar(data=cab_ds_distinct,mapping=aes(x=cab_type, fill=cab_type))+
+  scale_y_continuous(breaks = seq(0,1000000,100000),labels=scales::comma)+
+  labs(x="Uber Vs Lyft",
+       y="Total Count")+
+  labs(title="Who offers the most rides")+
+  theme(plot.title =element_text(hjust = 0.50,size=15),
+        legend.justification = c("right", "top"),
+       axis.title = element_text(size=12),
+        axis.text = element_text(size=09))+
+  theme(plot.caption=element_text(size=10))
+
+bp + scale_fill_manual(values = c("#00AFBB", "#E7B800"))
+```
+
+### Lyft: Per Surge Multiplier - Total Rides vs Hour of the Day
+```{r}
+
+surged_data <- cab_ds %>%
+        filter(cab_type == "Lyft", surge_multiplier > 1.00) %>%
+        dplyr::group_by(hour, surge_multiplier) %>%
+        dplyr::summarize(total_rides = n())
+surged_data$surge_multiplier <- as.factor(surged_data$surge_multiplier)
+
+lyft_surged_data <- ggplot(surged_data, aes(hour, total_rides, color = surge_multiplier)) +
+        geom_point(alpha=0.8, size=1, aes(color = surge_multiplier)) +
+        geom_line(aes(color = surge_multiplier)) + ggtitle("Lyft: Per Surge Multiplier - Total Rides vs Hour of the Day") +
+        facet_wrap(~surge_multiplier, ncol=1, scales="free") + xlab("Hour") + ylab("Total Rides") +
+        guides(color=guide_legend(ncol=1)) + theme(legend.position="none",
+                                                   panel.border = element_blank(),
+                                                   panel.spacing.x = unit(0,"line"))
+lyft_surged_data
+```
+
+
+### minimum and maximum fare prices 
+
+```{r}
+df<-sqldf("select source ,destination, cab_type ,avg(price) as average_price,min(price) as minimun_price,max(price) as maximum_price from cab_ds group by source, destination,cab_type order by cab_type")
+CrossTable(cab_ds$surge_multiplier, cab_ds$cab_type)
+```
+
+### Top 10 most Popular Stations 
+```{r}
+popular_station<-sqldf("select source,destination,(source|| ' to ' ||destination) as station_name,count(id) as number_of_trips from cab_ds group by source,destination order by count(id) desc LIMIT 10")
+ggplot(data=popular_station,aes(x=number_of_trips, y=station_name, fill=station_name))+geom_bar(stat='identity')+
+  labs(x="Number of Trips",y="Station Name")+
+  labs(title=" Top 10 Popular Stations ")+
+  theme(plot.title =element_text(hjust = 0.5,size=15), 
+        legend.position = c(2.50, .50),
+        legend.justification = c("right", "top"),
+       axis.title = element_text(size=12),
+        axis.text = element_text(size=09))+
+  theme(plot.caption=element_text(size=10))
+
+```
+
+### Weather affects the rides 
+```{r}
+cab_ds_distinct %>% group_by(short_summary) %>% 
+summarise(count = length(id),'Percentage' = (length(id) / nrow(cab_ds_distinct)) * 100) 
+bp <- cab_ds_distinct %>%
+    ggplot(aes(short_summary, fill=cab_type)) +
+    labs(x="weather", title="Rides according to the weather") +
+    geom_bar()+ coord_flip()
+
+bp + scale_fill_manual(values = c("#00AFBB", "#E7B800"))
+
+```
+
+### Temperature affects the ride's price 
+```{r}
+df2<-sqldf("select temperature, price , cab_type from cab_ds group by cab_type,temperature")
+bp <- df2 %>%
+    ggplot(aes(temperature, fill=cab_type)) +
+    labs(x="Temperature", title="Cabs affected due to temperature") +
+    geom_histogram()
+bp + scale_fill_manual(values = c("#00AFBB", "#E7B800"))
+```
+
+### weather the passengers opt for cabs 
+```{r}
+document_tm <- Corpus(VectorSource(cab_ds$long_summary))
+mat <- as.matrix(TermDocumentMatrix(document_tm))
+vec <- sort(rowSums(mat), decreasing = TRUE)
+word_corpus <- data.frame(word = names(vec), freq = vec)
+set.seed(3)
+wordcloud(word_corpus$word, freq = word_corpus$freq, colors = brewer.pal(8, "Dark2"))
+```
+
+### Time division on basis of hour 
+```{r}
+cab_ds %>% group_by(hour) %>% summarise(n = n()) %>% arrange(desc(n)) %>% hchart(type = "treemap", hcaes(name = hour, x = hour, value = n, color = n))
+```
+
+### Price range between Uber and Lyft 
+```{r}
+lyft<-sqldf("select * from cab_ds where cab_type='Lyft'")
+uber<-sqldf("select * from cab_ds where cab_type='Uber'")
+summary(lyft$price)
+summary(uber$price)
+hist(uber$price, col = "blue", density = 50, angle = 135, breaks = 40, xlim = c(0,80), main = "Histogram of Uber & Lyft price")
+hist(lyft$price, col = "green", density = 50, add = TRUE, breaks = 40)
+boxplot(cab_ds$price~cab_ds$cab_type,xlab='price', ylab='cab_type', data= cab_ds, horizontal = TRUE)
+```
+
+### Heatmap for specific location and hours
+```{r}
+bt<-cab_ds %>% select(price,cab_type,name,distance,short_summary,hour,source,destination) %>% filter(name!="WAV") %>% filter(name!="Lux") %>% filter(price>=0)
+bt$name_f<-factor(bt$name,
+                            levels=c("UberPool","Shared","UberX","Lyft","UberXL","Lyft XL","Black","Lux Black","Black SUV","Lux Black XL"))
+levels(bt$name_f) <- list("Share" = c("UberPool","Shared"),
+                             "Normal" =  c("UberX","Lyft"), 
+                             "SUV" = c("UberXL","Lyft XL"),
+                             "Lux" = c("Black","Lux Black"),
+                             "Lux SUV"= c("Black SUV","Lux Black XL"))
+
+bt<-bt %>% select(price,cab_type,name,name_f,distance,short_summary,hour,source,destination) %>% filter(name!="WAV") %>% filter(name!="Lux") %>% filter(price>=0)
+bt1<-bt %>% select(price,cab_type,name_f,hour,source, destination) %>% filter(destination=="Northeastern University") %>% filter(source=="Theatre District")  %>% filter(price>=0)
+ggplot(bt1, aes(name_f,hour ))+
+  geom_raster(aes(fill = price))+
+  scale_fill_gradientn(colours=c("red","yellow"),name="Price")+
+  labs(title ="Uber VS Lyft: Heat Map for Product types and Hours", x = "Product types", y = "Hours")+
+  theme_bw()+facet_wrap(~cab_type)
+```
+
+## Data Modelling 
+
+
+### Loading pre processed Data and factoring required columns 
+### Split data to train and test 
+```{r}
+
+wd <- weekdays(as.POSIXlt(cab_ds$datetime), abbreviate = TRUE)
+
+cab_ds['Fri'] = as.integer(wd=='Fri')
+cab_ds['Sat'] = as.integer(wd=='Sat')
+cab_ds['Sun'] = as.integer(wd=='Sun')
+
+#change short Summary of weather to binary variables
+ss_data <- unique(cab_ds$short_summary)
+for (i in ss_data)
+      {
+        cab_ds[i] = as.integer(cab_ds$name == i)
+
+       }
+
+for (p in unique(cab_ds$name))
+      {
+          cab_ds[p] = as.integer(cab_ds$name == p)
+      }
+
+lyft<-sqldf("select [distance],[surge_multiplier],[Fri], [Sat],[Sun],[Shared],[Lyft XL],[Lux Black XL], [LUX],[Lux Black],[ Mostly Cloudy ], [ Rain ], [ Partly Cloudy ],[ Overcast ], [ Light Rain ], [ Foggy ], [ Possible Drizzle ],[ Drizzle ], price from cab_ds where cab_type='Lyft'")
+uber<-sqldf("select [distance],[surge_multiplier],[Fri], [Sat],[Sun],[UberPool],[UberXL],[Black],[Black SUV], [WAV],[ Mostly Cloudy ], [ Rain ], [ Partly Cloudy ],[ Overcast ], [ Light Rain ], [ Foggy ], [ Possible Drizzle ],[ Drizzle ], price from cab_ds where cab_type='Uber'")
+
+colnames(uber)[9] ="Black_SUV"
+colnames(uber)[11] ="Mostly_Cloudy"
+colnames(uber)[12] ="Rain"
+colnames(uber)[13] ="Partly_Cloudy"
+colnames(uber)[14] ="Overcast"
+colnames(uber)[15] ="Light_Rain"
+colnames(uber)[16] ="Foggy"
+colnames(uber)[17] ="Possible_Drizzle"
+colnames(uber)[18] ="Drizzle"
+
+
+colnames(lyft)[7] ="Lyft_XL"
+colnames(lyft)[8] ="Lux_Black_XL"
+colnames(lyft)[10] ="Lux_Black"
+colnames(lyft)[11] ="Mostly_Cloudy"
+colnames(lyft)[12] ="Rain"
+colnames(lyft)[13] ="Partly_Cloudy"
+colnames(lyft)[14] ="Overcast"
+colnames(lyft)[15] ="Light_Rain"
+colnames(lyft)[16] ="Foggy"
+colnames(lyft)[17] ="Possible_Drizzle"
+colnames(lyft)[18] ="Drizzle"
+
+#Uber
+#selecting on numeric data
+numeric_index = sapply(uber,is.numeric)
+numeric_data = uber[,numeric_index]
+
+#divide into train & test
+train_index = sample(1:nrow(uber), 0.9 * nrow(uber))
+uber_train = uber[train_index,]
+uber_test = uber[-train_index,]
+
+uber_train<-na.omit(uber_train)
+sapply(uber_train, function(x) sum(is.na(x)))
+
+uber_test<-na.omit(uber_test)
+sapply(uber_test, function(x) sum(is.na(x)))
+
+#lyft
+#selecting on numeric data
+numeric_index = sapply(lyft,is.numeric)
+numeric_data = uber[,numeric_index]
+
+#divide into train & test
+train_index = sample(1:nrow(lyft), 0.9 * nrow(lyft))
+lyft_train = lyft[train_index,]
+lyft_test = lyft[-train_index,]
+
+lyft_train<-na.omit(lyft_train)
+sapply(lyft_train, function(x) sum(is.na(x)))
+
+lyft_test<-na.omit(lyft_test)
+sapply(lyft_test, function(x) sum(is.na(x)))
+
+```
+
+
+### Linear Regression 
+```{r}
+#Uber
+uber_lm_model = lm(price ~., data = uber_train)
+summary(uber_lm_model)
+plot (uber_lm_model)
+
+
+#prediction
+uber_pred = predict(uber_lm_model, uber_test[,1:18])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=uber_test$price, predicteds=uber_pred)) 
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy 
+
+#Evaluation
+mat_lr_uber<- regr.eval(uber_test[,19], uber_pred)#, stats = c('mape','rmse'))
+print(mat_lr_uber)
+
+errors = abs(uber_pred - uber_test$price)
+mape = 100 * (errors / uber_test$price)
+uber_lr_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Linear Regression for Uber :%f",uber_lr_accuracy)
+
+#-------------------------------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------------------------------
+
+#lyft
+lyft_lm_model = lm(price ~., data = lyft_train)
+summary(lyft_lm_model)
+plot(lyft_lm_model)
+
+#prediction
+lyft_pred = predict(lyft_lm_model, lyft_test[,1:18])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=lyft_test$price, predicteds=lyft_pred))
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy
+
+#Evaluation
+mat_lr_lyft<- regr.eval(lyft_test[,19], lyft_pred)#, stats = c('mape','rmse'))
+print(mat_lr_lyft)
+errors = abs(lyft_pred - lyft_test$price)
+mape = 100 * (errors / lyft_test$price)
+lyft_lr_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Linear Regression for Lyft :%f",lyft_lr_accuracy)
+
+
+
+```
+
+### Decision Tree
+```{r}
+#Uber
+uber_rpart_model = rpart(price ~., data = uber_train, method="anova")
+summary(uber_rpart_model)
+#identify best cp value to use
+best <- uber_rpart_model$cptable[which.min(uber_rpart_model$cptable[,"xerror"]),"CP"]
+
+#produce a pruned tree based on the best cp value
+pruned_tree <- prune(uber_rpart_model, cp=best)
+
+#plot the pruned tree
+prp(pruned_tree)
+
+#prediction
+uber_pred_rpart = predict(uber_rpart_model, uber_test[,-19])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=uber_test$price, predicteds=uber_pred_rpart)) 
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy 
+
+#Evaluation
+mat_dt_uber<- regr.eval(uber_test[,19], uber_pred_rpart)#, stats = c('mape','rmse'))
+print(mat_dt_uber)
+errors = abs(uber_pred_rpart - uber_test$price)
+mape = 100 * (errors / uber_test$price)
+uber_dt_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Decision Tree for Uber :%f",uber_dt_accuracy)
+#-------------------------------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------------------------------
+
+# lyft
+lyft_rpart_model = rpart(price ~., data = lyft_train, method="anova")
+summary(lyft_rpart_model)
+
+#identify best cp value to use
+best <- lyft_rpart_model$cptable[which.min(lyft_rpart_model$cptable[,"xerror"]),"CP"]
+#produce a pruned tree based on the best cp value
+pruned_tree <- prune(lyft_rpart_model, cp=best)
+
+#plot the pruned tree
+prp(pruned_tree)
+
+#prediction
+lyft_pred_rpart = predict(lyft_rpart_model, lyft_test[,-19])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=lyft_test$price, predicteds=lyft_pred_rpart)) 
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy 
+
+#Evaluation
+mat_dt_lyft<- regr.eval(lyft_test[,19], lyft_pred_rpart)#, stats = c('mape','rmse'))
+print(mat_dt_lyft)
+errors = abs(lyft_pred_rpart - lyft_test$price)
+mape = 100 * (errors / lyft_test$price)
+lyft_dt_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Decision Tree for Lyft :%f",lyft_dt_accuracy)
+
+```
+
+
+### Random Forest
+
+```{r}
+#Uber
+#head(uber_train)
+uber_rmforest_model = randomForest(price ~., data = uber_train, importance = TRUE, ntree = 100)
+summary(uber_rmforest_model)
+
+#prediction
+uber_pred_rmforest = predict(uber_rmforest_model, uber_test[,-19])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=uber_test$price, predicteds=uber_pred_rmforest)) 
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy 
+
+#Evaluation
+mat_rf_uber<- regr.eval(uber_test[,19], uber_pred_rmforest)#, stats = c('mape','rmse'))
+print(mat_rf_uber)
+errors = abs(uber_pred_rmforest - uber_test$price)
+mape = 100 * (errors / uber_test$price)
+uber_rf_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Random Forest for Uber :%f",uber_rf_accuracy)
+
+#-------------------------------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------------------------------
+
+
+lyft_rmforest_model = randomForest(price ~., data = lyft_train, importance = TRUE, ntree = 100)
+summary(lyft_rmforest_model)
+
+#prediction
+lyft_pred_rmforest = predict(lyft_rmforest_model, lyft_test[,-19])
+
+#Correlation Matrix
+actuals_predicts <- data.frame(cbind(actuals=lyft_test$price, predicteds=lyft_pred_rmforest))
+correlation_accuracy <- cor(actuals_predicts)
+correlation_accuracy
+
+#Evaluation
+mat_rf_lyft<- regr.eval(lyft_test[,19], lyft_pred_rmforest)#, stats = c('mape','rmse'))
+print(mat_rf_lyft)
+
+errors = abs(lyft_pred_rmforest - lyft_test$price)
+mape = 100 * (errors / lyft_test$price)
+lyft_rf_accuracy = 100 - mean(mape)
+sprintf("The Accuracy of Random Forest for Lyft :%f",lyft_rf_accuracy)
+
+
+
+```
+
+
+## Model Evaluation 
+```{r}
+# Uber
+print("***************Uber Statitics*************")
+tab <- matrix(c(mat_lr_uber["mae"],mat_dt_uber["mae"],mat_rf_uber["mae"],mat_lr_uber["mse"],mat_dt_uber["mse"],mat_rf_uber["mse"],mat_lr_uber["rmse"],mat_dt_uber["rmse"],mat_rf_uber["rmse"],mat_lr_uber["mape"],mat_dt_uber["mape"],mat_rf_uber["mape"], uber_lr_accuracy,uber_dt_accuracy,uber_rf_accuracy), ncol=3, byrow=TRUE)
+colnames(tab) <- c("Linear Regression",'Decision Tree','Random Forest')
+rownames(tab) <- c('MAE','MSE','RMSE','MAPE',"Accuracy")
+uber_tab <- as.table(tab)
+uber_tab
+
+
+print("***************lyft Statitics*************")
+# Lyft
+tab <- matrix(c(mat_lr_lyft["mae"],mat_dt_lyft["mae"],mat_rf_lyft["mae"],mat_lr_lyft["mse"],mat_dt_lyft["mse"],mat_rf_lyft["mse"],mat_lr_lyft["rmse"],mat_dt_lyft["rmse"],mat_rf_lyft["rmse"],mat_lr_lyft["mape"],mat_dt_lyft["mape"],mat_rf_lyft["mape"], lyft_lr_accuracy,lyft_dt_accuracy,lyft_rf_accuracy), ncol=3, byrow=TRUE)
+colnames(tab) <- c("Linear Regression",'Decision Tree','Random Forest')
+rownames(tab) <- c('MAE','MSE','RMSE','MAPE',"Accuracy")
+lyft_tab <- as.table(tab)
+lyft_tab
+
+```
+Based on different metrics, we can conclude that the Random Forest model is the best model and thus we could consider this as our final model.
